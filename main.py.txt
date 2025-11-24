@@ -1,0 +1,71 @@
+import streamlit as st
+import speech_recognition as sr
+import pyttsx3
+
+# Initialize TTS engine
+engine = pyttsx3.init()
+
+questions = {
+    "Engineer": [
+        "Tell me about your experience with programming.",
+        "How do you approach debugging?",
+        "Explain a project you worked on recently."
+    ],
+    "Sales": [
+        "How do you handle customer objections?",
+        "Describe a successful sales pitch you made.",
+        "What strategies do you use to close deals?"
+    ],
+    "Retail Associate": [
+        "How do you manage difficult customers?",
+        "What steps do you take to keep the store organized?",
+        "How do you handle peak hours?"
+    ]
+}
+
+st.title("🎤 Interview Practice Partner")
+
+role = st.selectbox("Select Role", list(questions.keys()))
+start = st.button("Start Interview")
+
+if "index" not in st.session_state:
+    st.session_state.index = 0
+    st.session_state.answers = []
+
+if start:
+    st.session_state.index = 0
+    st.session_state.answers = []
+
+if st.session_state.index < len(questions[role]):
+    question = questions[role][st.session_state.index]
+    st.subheader(f"Question {st.session_state.index + 1}: {question}")
+
+    # Speak question
+    if st.button("🔊 Hear Question"):
+        engine.say(question)
+        engine.runAndWait()
+
+    # Text input
+    answer = st.text_input("Your Answer")
+
+    # Voice input
+    if st.button("🎤 Speak Answer"):
+        recognizer = sr.Recognizer()
+        with sr.Microphone() as source:
+            st.write("Listening...")
+            audio = recognizer.listen(source)
+            try:
+                text = recognizer.recognize_google(audio)
+                st.write(f"Transcript: {text}")
+                answer = text
+            except:
+                st.write("Sorry, could not recognize your voice.")
+
+    if st.button("Next"):
+        st.session_state.answers.append(answer)
+        st.session_state.index += 1
+else:
+    if st.session_state.answers:
+        score = sum(1 for ans in st.session_state.answers if len(ans.split()) > 5)
+        feedback = "Great job! Your answers were detailed." if score >= len(st.session_state.answers)//2 else "Try to give longer, more detailed answers."
+        st.success(feedback)
