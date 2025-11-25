@@ -1,44 +1,71 @@
-import streamlit as st
+import streamlit as st 
 import speech_recognition as sr
 import pyttsx3
+from llama_cpp import Llama
 
-# Initialize TTS engine
+# ========= LOAD LOCAL MODEL =========
+model_path = r"D:\praveen\models\CapybaraHermes-2.5-Mistral-7B\capybarahermes-2.5-mistral-7b.Q4_K_S.gguf"
+llm = Llama(model_path=model_path, n_ctx=4096)
+
+# ========= TTS =========
 engine = pyttsx3.init()
 
-questions = {
-    "Engineer": [
-        "Tell me about your experience with programming.",
-        "How do you approach debugging?",
-        "Explain a project you worked on recently."
-    ],
-    "Sales": [
-        "How do you handle customer objections?",
-        "Describe a successful sales pitch you made.",
-        "What strategies do you use to close deals?"
-    ],
-    "Retail Associate": [
-        "How do you manage difficult customers?",
-        "What steps do you take to keep the store organized?",
-        "How do you handle peak hours?"
-    ]
+# ========= ROLES =========
+roles = {
+    "Engineer": "software development and programming",
+    "Sales": "sales and customer persuasion",
+    "Retail Associate": "retail store customer and organization"
 }
 
-st.title("🎤 Interview Practice Partner")
+# ========= SESSION STATE =========
+if "step" not in st.session_state: st.session_state.step = 0
+if "role" not in st.session_state: st.session_state.role = None
+if "candidate_name" not in st.session_state: st.session_state.candidate_name = "Candidate"
+if "history" not in st.session_state: st.session_state.history = []
+if "current_answer" not in st.session_state: st.session_state.current_answer = ""
 
-role = st.selectbox("Select Role", list(questions.keys()))
-start = st.button("Start Interview")
+st.title("🎤 AI Interview Practice Partner")
 
-if "index" not in st.session_state:
-    st.session_state.index = 0
-    st.session_state.answers = []
+# ========= ROLE + NAME SELECTION =========
+if st.session_state.step == 0:
+    st.session_state.role = st.selectbox("Select Interview Role", list(roles.keys()))
+    st.session_state.candidate_name = st.text_input("Enter Candidate Name:", value="Candidate")
+    if st.button("Start Interview"):
+        st.session_state.step = 1
+        st.session_state.history = []
+        st.session_state.current_answer = ""
+        st.rerun()
 
-if start:
-    st.session_state.index = 0
-    st.session_state.answers = []
+# ========= INTERVIEW QUESTIONS =========
+elif st.session_state.step == 1:
 
-if st.session_state.index < len(questions[role]):
-    question = questions[role][st.session_state.index]
-    st.subheader(f"Question {st.session_state.index + 1}: {question}")
+    # Build the prompt for question generation
+    if len(st.session_state.history) == 0:
+        prompt = f"""
+        You are an interviewer for the role of {st.session_state.role}.
+        Candidate name: {st.session_state.candidate_name}
+        RULES:
+        - Ask ONLY the first interview question.
+        - Do NOT add explanations, comments, or examples.
+        - Output one line, concise, professional.
+        """
+    else:
+        last_answer = st.session_state.history[-1]["answer"]
+        prompt = f"""
+        You are interviewing {st.session_state.candidate_name} for the role of {st.session_state.role}.
+        Candidate answered: "{last_answer}"
+        RULES:
+        - Ask ONLY ONE follow-up question based on the answer.
+        - Do NOT explain, comment, or give examples.
+        - Output one line, concise, professional.
+        """
+
+    # Generate the question
+    response = llm(prompt, max_tokens=150, temperature=0.7)
+    question = response["choices"][0]["text"].strip()
+
+    st.subheader(f"Question {len(st.session_state.history)+1} of 5")
+    st.write(question)
 
     # Speak question
     if st.button("🔊 Hear Question"):
@@ -46,26 +73,65 @@ if st.session_state.index < len(questions[role]):
         engine.runAndWait()
 
     # Text input
-    answer = st.text_input("Your Answer")
+    user_input = st.text_input("Your Answer:", value=st.session_state.current_answer)
 
     # Voice input
     if st.button("🎤 Speak Answer"):
         recognizer = sr.Recognizer()
         with sr.Microphone() as source:
-            st.write("Listening...")
+            st.write("Listening…")
             audio = recognizer.listen(source)
             try:
-                text = recognizer.recognize_google(audio)
-                st.write(f"Transcript: {text}")
-                answer = text
+                spoken = recognizer.recognize_google(audio)
+                st.success(f"Transcript captured: {spoken}")
+                st.session_state.current_answer = spoken
             except:
-                st.write("Sorry, could not recognize your voice.")
+                st.error("Could not recognize voice")
 
-    if st.button("Next"):
-        st.session_state.answers.append(answer)
-        st.session_state.index += 1
-else:
-    if st.session_state.answers:
-        score = sum(1 for ans in st.session_state.answers if len(ans.split()) > 5)
-        feedback = "Great job! Your answers were detailed." if score >= len(st.session_state.answers)//2 else "Try to give longer, more detailed answers."
-        st.success(feedback)
+    # Next question
+    if st.button("Next ➜"):
+        final_answer = user_input if user_input.strip() != "" else st.session_state.current_answer
+        if final_answer.strip() == "":
+            st.warning("Please provide an answer before continuing.")
+        else:
+            st.session_state.history.append({"question": question, "answer": final_answer})
+            st.session_state.current_answer = ""
+            # Limit to 5 questions
+            if len(st.session_state.history) >= 5:
+                st.session_state.step = 2
+            st.rerun()
+
+# ========= FINAL FEEDBACK =========
+elif st.session_state.step == 2:
+    st.header("📝 Interview Completed")
+    st.write("Generating AI feedback...")
+
+    transcript = "\n".join(
+        [f"Q{i+1}: {h['question']}\nA{i+1}: {h['answer']}" for i, h in enumerate(st.session_state.history)]
+    )
+
+    feedback_prompt = f"""
+    You are an HR interviewer analyzing a candidate interview for {st.session_state.role}.
+    Candidate name: {st.session_state.candidate_name}
+    Provide:
+    - Strengths
+    - Weaknesses
+    - Score out of 100
+    - Improvement tips
+    Be concise and professional.
+    Transcript:
+    {transcript}
+    """
+
+    feedback = llm(feedback_prompt, max_tokens=350, temperature=0.4)
+    result = feedback["choices"][0]["text"].strip()
+
+    st.success("✔ Feedback Generated")
+    st.write(result)
+
+    if st.button("🔁 Start Again"):
+        st.session_state.step = 0
+        st.session_state.history = []
+        st.session_state.current_answer = ""
+        st.session_state.candidate_name = "Candidate"
+        st.rerun()
